@@ -3,13 +3,26 @@ from flask import Flask, request, jsonify, abort
 from sqlalchemy import exc
 import json
 from flask_cors import CORS
+import sqlalchemy
+from sqlalchemy.orm.session import close_all_sessions
 
-from .database.models import db_drop_and_create_all, setup_db, Drink
+from .database.models import db_drop_and_create_all, setup_db,\
+    Drink, session_close, session_revert
 from .auth.auth import AuthError, requires_auth
 
 app = Flask(__name__)
 setup_db(app)
 CORS(app)
+
+# CORS Headers 
+@app.after_request
+def after_request(response):
+    response.headers.add('Access-Control-Allow-Headers', \
+                            'Content-Type,Authorization,true')
+    response.headers.add('Access-Control-Allow-Methods', \
+                            'GET,PUT,POST,DELETE,OPTIONS,PATCH')
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    return response
 
 '''
 @TODO uncomment the following line to initialize the datbase
@@ -17,70 +30,112 @@ CORS(app)
 !! NOTE THIS MUST BE UNCOMMENTED ON FIRST RUN
 !! Running this funciton will add one
 '''
-# db_drop_and_create_all()
+db_drop_and_create_all()
+
+def format_input_recipe(recipe_data):
+    return ('{}'.format(str(recipe_data))).replace('\'', '\"')
 
 # ROUTES
-'''
-@TODO implement endpoint
-    GET /drinks
-        it should be a public endpoint
-        it should contain only the drink.short() data representation
-    returns status code 200 and json {"success": True, "drinks": drinks} where drinks is the list of drinks
-        or appropriate status code indicating reason for failure
-'''
+@app.route('/drinks', methods=['GET'])
+def get_drinks():
+    try:
+        drinks = Drink.query.all()
+        drinks_list = [drink.short() for drink in drinks]
+        return jsonify({
+            "success" : True,
+            "drinks" : drinks_list
+        })
+    except Exception:
+        abort (404)
+    finally:
+        session_close()
 
 
-'''
-@TODO implement endpoint
-    GET /drinks-detail
-        it should require the 'get:drinks-detail' permission
-        it should contain the drink.long() data representation
-    returns status code 200 and json {"success": True, "drinks": drinks} where drinks is the list of drinks
-        or appropriate status code indicating reason for failure
-'''
+@app.route('/drinks-detail', methods=['GET'])
+@requires_auth('get:drinks-detail')
+def get_drinks_detailed(jwt):
+    try:
+        drinks = Drink.query.all()
+        drinks_list = [drink.long() for drink in drinks]
+        return jsonify({
+            "success" : True,
+            "drinks" : drinks_list
+        })
+    except Exception:
+        abort (404)
+    finally:
+        session_close()
 
+# TODO states to "returns status code 200 and json {"success": True,
+# "drinks": drink} where drink an array containing only the newly created drink".
+# This goes against the frontend design to instantly add a drink to the UI.
+# I will be leaving as the TODO says, but perhaps remove that in the future?
+@app.route('/drinks', methods=['POST'])
+@requires_auth('post:drinks')
+def make_drink(jwt):
+    data = request.get_json()
+    try:
+        new_drink = Drink(\
+            data['title'],\
+            format_input_recipe(data['recipe']))
+        Drink.insert(new_drink)
+        saved_drink = Drink.query.filter(Drink.title==new_drink.title).first()
+        return jsonify({
+            "success" : True,
+            "drinks" : saved_drink.long()
+        })
+    except Exception:
+        session_revert()
+        abort(422)
+    finally:
+        session_close()
 
-'''
-@TODO implement endpoint
-    POST /drinks
-        it should create a new row in the drinks table
-        it should require the 'post:drinks' permission
-        it should contain the drink.long() data representation
-    returns status code 200 and json {"success": True, "drinks": drink} where drink an array containing only the newly created drink
-        or appropriate status code indicating reason for failure
-'''
+@app.route('/drinks/<int:id>', methods=['PATCH'])
+@requires_auth('patch:drinks')
+def update_drink(jwt, id):
+    data = request.get_json()
+    try:
+        target_drink = Drink.query.filter(Drink.id==id).first()
+        target_drink.title = data['title']
+        target_drink.recipe = format_input_recipe(data['recipe'])
+        Drink.update(target_drink)
+        updated_drink =\
+                Drink.query.filter(Drink.title==target_drink.title).first()
+        return jsonify({
+            "success" : True,
+            "drinks" : updated_drink.long()
+        })
+    except sqlalchemy.orm.exc.UnmappedInstanceError:
+        session_revert()
+        abort(404)
+    except TypeError:
+        session_revert()
+        abort(404)
+    except Exception:
+        session_revert()
+        abort(422)
+    finally:
+        session_close()
 
+@app.route('/drinks/<int:id>', methods=['DELETE'])
+@requires_auth('delete:drinks')
+def delete_drink(jwt, id):
+    try:
+        target_drink = Drink.query.filter(Drink.id==id).first()
+        Drink.delete(target_drink)
 
-'''
-@TODO implement endpoint
-    PATCH /drinks/<id>
-        where <id> is the existing model id
-        it should respond with a 404 error if <id> is not found
-        it should update the corresponding row for <id>
-        it should require the 'patch:drinks' permission
-        it should contain the drink.long() data representation
-    returns status code 200 and json {"success": True, "drinks": drink} where drink an array containing only the updated drink
-        or appropriate status code indicating reason for failure
-'''
-
-
-'''
-@TODO implement endpoint
-    DELETE /drinks/<id>
-        where <id> is the existing model id
-        it should respond with a 404 error if <id> is not found
-        it should delete the corresponding row for <id>
-        it should require the 'delete:drinks' permission
-    returns status code 200 and json {"success": True, "delete": id} where id is the id of the deleted record
-        or appropriate status code indicating reason for failure
-'''
-
-
-# Error Handling
-'''
-Example error handling for unprocessable entity
-'''
-
+        return jsonify({
+            "success" : True,
+            "delete" : id
+        })
+    except sqlalchemy.orm.exc.UnmappedInstanceError:
+        session_revert()
+        abort(404)
+    except TypeError:
+        session_revert()
+        abort(404)
+    finally:
+        session_close()
 
 @app.errorhandler(422)
 def unprocessable(error):
@@ -90,25 +145,34 @@ def unprocessable(error):
         "message": "unprocessable"
     }), 422
 
+@app.errorhandler(404)
+def unprocessable(error):
+    return jsonify({
+        "success": False,
+        "error": 404,
+        "message": "resource not found"
+    }), 404
 
-'''
-@TODO implement error handlers using the @app.errorhandler(error) decorator
-    each error handler should return (with approprate messages):
-             jsonify({
-                    "success": False,
-                    "error": 404,
-                    "message": "resource not found"
-                    }), 404
+@app.errorhandler(401)
+def unauthorized(error):
+    return jsonify({
+        "success": False,
+        "error": 401,
+        "message": "unauthorized"
+    }), 401
+    
+@app.errorhandler(403)
+def forbidden(error):
+    return jsonify({
+        "success": False,
+        "error": 403,
+        "message": "forbidden"
+    }), 403
 
-'''
-
-'''
-@TODO implement error handler for 404
-    error handler should conform to general task above
-'''
-
-
-'''
-@TODO implement error handler for AuthError
-    error handler should conform to general task above
-'''
+@app.errorhandler(AuthError)
+def AuthErrorHandler(error):
+    return jsonify({
+        "success": False,
+        "error": error.code,
+        "message": error.description
+    })

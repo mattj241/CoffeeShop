@@ -108,7 +108,7 @@ def update_drink(jwt, id):
         updated_drink = Drink.query.filter(Drink.title == target_drink.title).first()
         return jsonify({
             "success" : True,
-            "drinks" : updated_drink.long()
+            "drinks" : [updated_drink.long()]
         })
     except sqlalchemy.orm.exc.UnmappedInstanceError:
         session_revert()

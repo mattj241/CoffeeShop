@@ -2,6 +2,8 @@ import os
 from sqlalchemy import Column, String, Integer
 from flask_sqlalchemy import SQLAlchemy
 import json
+from sqlalchemy.orm import backref, relationship
+from sqlalchemy.sql.schema import ForeignKey
 from sqlalchemy.sql.sqltypes import JSON
 
 db_filename = "database.db"
@@ -41,10 +43,13 @@ def db_drop_and_create_all():
         title='water',
         recipe='[{"name": "water", "color": "blue", "parts": 1}]',
     )
+    # print(drink.recipe)
     drink.insert()
+
 
 def session_close():
     db.session.close()
+
 
 def session_revert():
     db.session.rollback()
@@ -57,14 +62,14 @@ Drink
 a persistent drink entity, extends the base SQLAlchemy Model
 '''
 
-
 class Drink(db.Model):
-    id = Column(Integer, primary_key=True)
+    id = Column(Integer().with_variant(Integer, "sqlite"), primary_key=True)
+    # id = Column(Integer, primary_key=True)
     title = Column(String(80), unique=True)
     # the ingredients blob - this stores a lazy json blob
     # the required datatype is [{'color': string, 'name':string, 'parts':number}]
-    recipe = Column(JSON, nullable=False)
-
+    recipe = Column(String(180), nullable=False)
+    # recipe = relationship('Recipe', backref='drink')
 
     '''
     __init__()
@@ -74,7 +79,6 @@ class Drink(db.Model):
     def __init__(self, title, recipe):
         self.title = title
         self.recipe = recipe
-
 
     '''
     short()
@@ -143,3 +147,10 @@ class Drink(db.Model):
 
     def __repr__(self):
         return json.dumps(self.short())
+
+# class Recipe(db.Model):
+#     id = Column(Integer, primary_key=True)
+#     drink_id = Column(Integer, ForeignKey('drink.id'))
+#     color = Column(String(40), nullable=False)
+#     name = Column(String(40), nullable=False)
+#     parts= Column(Integer, nullable=False)

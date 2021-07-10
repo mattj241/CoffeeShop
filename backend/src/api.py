@@ -14,6 +14,7 @@ app = Flask(__name__)
 setup_db(app)
 CORS(app)
 
+
 # CORS Headers 
 @app.after_request
 def after_request(response):
@@ -24,6 +25,7 @@ def after_request(response):
     response.headers.add('Access-Control-Allow-Origin', '*')
     return response
 
+
 '''
 @TODO uncomment the following line to initialize the datbase
 !! NOTE THIS WILL DROP ALL RECORDS AND START YOUR DB FROM SCRATCH
@@ -32,8 +34,6 @@ def after_request(response):
 '''
 db_drop_and_create_all()
 
-def format_input_recipe(recipe_data):
-    return ('{}'.format(str(recipe_data))).replace('\'', '\"')
 
 # ROUTES
 @app.route('/drinks', methods=['GET'])
@@ -66,8 +66,9 @@ def get_drinks_detailed(jwt):
     finally:
         session_close()
 
+
 # TODO states to "returns status code 200 and json {"success": True,
-# "drinks": drink} where drink an array containing only the newly created drink".
+# "drinks":drink}where drink an array containing only the newly created drink".
 # This goes against the frontend design to instantly add a drink to the UI.
 # I will be leaving as the TODO says, but perhaps remove that in the future?
 @app.route('/drinks', methods=['POST'])
@@ -75,9 +76,11 @@ def get_drinks_detailed(jwt):
 def make_drink(jwt):
     data = request.get_json()
     try:
-        new_drink = Drink(\
-            data['title'],\
-            format_input_recipe(data['recipe']))
+        formatted_title = data['title']
+        recipe_list = (json.dumps(data['recipe']))
+        # print(request.get_json())
+        # print(recipe_list)
+        new_drink = Drink(formatted_title, recipe_list)
         Drink.insert(new_drink)
         saved_drink = Drink.query.filter(Drink.title==new_drink.title).first()
         return jsonify({
@@ -90,17 +93,19 @@ def make_drink(jwt):
     finally:
         session_close()
 
+
 @app.route('/drinks/<int:id>', methods=['PATCH'])
 @requires_auth('patch:drinks')
 def update_drink(jwt, id):
     data = request.get_json()
     try:
         target_drink = Drink.query.filter(Drink.id==id).first()
-        target_drink.title = data['title']
-        target_drink.recipe = format_input_recipe(data['recipe'])
+        if "title" in data:
+            target_drink.title = data['title']
+        if "recipe" in data:
+            target_drink.recipe = (json.dumps(data['recipe']))
         Drink.update(target_drink)
-        updated_drink =\
-                Drink.query.filter(Drink.title==target_drink.title).first()
+        updated_drink = Drink.query.filter(Drink.title == target_drink.title).first()
         return jsonify({
             "success" : True,
             "drinks" : updated_drink.long()
@@ -109,6 +114,9 @@ def update_drink(jwt, id):
         session_revert()
         abort(404)
     except TypeError:
+        session_revert()
+        abort(404)
+    except AttributeError:
         session_revert()
         abort(404)
     except Exception:
@@ -123,7 +131,6 @@ def delete_drink(jwt, id):
     try:
         target_drink = Drink.query.filter(Drink.id==id).first()
         Drink.delete(target_drink)
-
         return jsonify({
             "success" : True,
             "delete" : id
@@ -137,6 +144,15 @@ def delete_drink(jwt, id):
     finally:
         session_close()
 
+
+@app.errorhandler(AuthError)
+def AuthErrorHandler(error):
+    return jsonify({
+        "success": False,
+        "error": error.description,
+        "message": error.code['code']
+    }), error.description
+
 @app.errorhandler(422)
 def unprocessable(error):
     return jsonify({
@@ -145,13 +161,15 @@ def unprocessable(error):
         "message": "unprocessable"
     }), 422
 
+
 @app.errorhandler(404)
-def unprocessable(error):
+def not_found(error):
     return jsonify({
         "success": False,
         "error": 404,
         "message": "resource not found"
     }), 404
+
 
 @app.errorhandler(401)
 def unauthorized(error):
@@ -160,6 +178,7 @@ def unauthorized(error):
         "error": 401,
         "message": "unauthorized"
     }), 401
+
     
 @app.errorhandler(403)
 def forbidden(error):
@@ -168,11 +187,3 @@ def forbidden(error):
         "error": 403,
         "message": "forbidden"
     }), 403
-
-@app.errorhandler(AuthError)
-def AuthErrorHandler(error):
-    return jsonify({
-        "success": False,
-        "error": error.code,
-        "message": error.description
-    })
